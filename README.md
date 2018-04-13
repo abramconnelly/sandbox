@@ -12,4 +12,4 @@ and correcting few spelling mistakes.
 
 The [data file](data/ipip.json) `data/ipip.json` is licensed under CC0 in keeping with the original data.
 
-![cc0][img/cc-zero.svg]
+![cc0](img/cc-zero.svg)

@@ -1,0 +1,21 @@
+Compilaton
+----------
+
+Simply issue 'make' inside the sp dir.
+
+Running Examples
+----------------
+
+./sp -h
+
+./sp -n10000 -a4.2 -%1 -vv
+
+./sp -l formula.cnf
+
+Warning
+-------
+
+This is still experimental code!
+
+
+The last version of this program is at http://www.ictp.trieste.it/~zecchina/SP

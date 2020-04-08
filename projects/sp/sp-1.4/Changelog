@@ -1,0 +1,68 @@
+March 2002 (rz, ml & ab)
+	-First working version based on the original fortran program of
+	 R.Zecchina and M.Mézard (ml, rz & ab)
+30 April 2002 (rz & ab)
+	-Several optimizations to compute_distweight, totalizing some 500%
+	 boost in total (!). (rz & ab)
+	-reads cnf formulas. (ab)
+	-dynamic memory usage. (ab)
+	-renaming of variables and function names for consistency and
+	 shorteness: connect->v, flip_*->fix_* and others (ab)
+	-online shell call to external program (walksat) to solve 
+	 paramagnetic subformulae (ab)
+	-created small dumb integrating tools: merge.c and verify.c
+14 June 2002 (ab)
+	-rename kpnew.* to kp.*
+	-split kp.c in separate .c files: formula.c simann.c kp.c
+	-the convergence error tolerance now is a max instead of an average.
+         (still experimenting about this one)
+	-small changes on strategies (idem)
+August 2002 (mw, rz, ab)
+	-simplified dynamics at y=infinity (rz & mw)
+	-improved sequential updating of pi and eta (rz, mw & ab)
+	-convergence error tolerance is now relative (still a max) (rz)
+	-fixed 'last field' bug (ab)
+	-use getopt to parse command line (ab)
+	-rename k* to s* (rz)
+	-fix fraction of spins at a time
+September 2002 (rz, mm, ab)
+	-iterative updating in a random permutation order (mm)
+	-handle variable clause-size formulas (ab)
+	-optimized memory usage (ab)
+	-added initial 1-clauses simplification
+October 2002 (rz, ab)
+	-renormalization of eta
+	-correct handling of pi products in corner cases
+	-compute_sigma()
+November 2002
+	-first public release
+January 2003 (ab)
+	-fix a bug on calling qsort that showed up on solaris 
+	 but not on linux, by P.Henderson and P.Purdom
+	-minor bugfixes
+April 2003 (ab)
+	-added experimentals -R and -z
+	-second public release
+May 2003 (ab)
+	-switch from char to int in data struct
+August 2003 (ab)
+	-fix a crash (yes!) on reading formulae with 1-clauses, thanks to
+	 Florent Krzakala for reporting.
+	-fix a "<0 should be <EPS" bug. Thanks to Finnegan Southey and
+	 Florent Krzakala.
+	-fix a bug in which some "corner cases" were not handled correctly,
+	 thanks to Finnegan Southey.
+	-compile with -DFAST_ITERATION for a possibly less accurate but 
+	 faster (and easier to read) sp iteration (possibly makes sense only
+	 in random formulae in the first phases of decimation, though).
+	-make -z optional (-DQUEUE)
+April 2004 (ab)
+	-refix a bug that was already fixed but came back for some unknown
+	 reason (the crash as first item above). Thanks to the many people
+	 that reported.
+
+ab: Alfredo Braunstein <abraunst@ictp.trieste.it>
+ml: Michele Leone <micleone@ictp.trieste.it>
+mm: Marc Mézard <mezard@ipno.in2p3.fr>
+mw: Martin Weigt <weigt@Theorie.Physik.UNI-Goettingen.DE>
+rz: Riccardo Zecchina <zechhina@ictp.trieste.it>

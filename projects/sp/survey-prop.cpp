@@ -3,7 +3,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
+
 
 #include <errno.h>
 #include <getopt.h>
@@ -11,6 +13,8 @@
 
 #include <vector>
 #include <string>
+
+int g_verbose = 3;
 
 double _drand() {
   return (double)(rand())/(RAND_MAX + 1.0);
@@ -57,19 +61,32 @@ typedef struct sp_edge_type {
 } sp_edge_t;
 
 typedef struct sp_type {
-  double m_eps;
 
-  int32_t m_nclause, m_nvar;
-
-  std::vector< int32_t > m_raw_clause;
-  std::vector< int32_t > m_raw_clause_info;
-
-  std::vector< int32_t > m_v_idx, m_c_idx;
-  std::vector< std::vector< sp_edge_t > > m_E;
+  int32_t m_nvar;
+  int32_t m_nclause;
 
   // time index {0,1}
   //
   int32_t m_t;
+
+  double m_eps;
+
+  // 'raw' information from dimacs load
+  //
+  std::vector< int32_t > m_raw_clause_info;
+  std::vector< int32_t > m_raw_clause;
+
+  // list of variable indexes as they appear in the edge list (m_E)
+  //
+  std::vector< int32_t > m_v_idx;
+
+  // list of claus indexes as they appear in the edge list (m_E)
+  //
+  std::vector< int32_t > m_c_idx;
+
+  // edge list as vector of vectors
+  //
+  std::vector< std::vector< sp_edge_t > > m_E;
 
   // Variables are named starting at 1 but have
   //   structures that are 0 indexed.
@@ -82,6 +99,95 @@ typedef struct sp_type {
     m_t = 0;
 
     m_eps = 1.0 / (1024.0*1024.0*256.0);
+  }
+
+  void debug_print_weight(char *pfx, int it) {
+    int v_idx, c_idx, i, p;
+
+    printf("%s\n", pfx);
+    for (v_idx=0; v_idx<m_v_idx.size(); v_idx++) {
+      p = m_v_idx[v_idx];
+      for (i=0; i<m_E[p].size(); i++) {
+        printf("%s v%i-c%i (%0.3f,%0.3f,%0.3f)\n",
+            pfx,
+            m_E[p][i].m_id[0], m_E[p][i].m_id[1],
+            (float)m_E[p][i].m_d[it][0],
+            (float)m_E[p][i].m_d[it][1],
+            (float)m_E[p][i].m_d[it][2] );
+      }
+    }
+    printf("%s\n", pfx);
+    for (c_idx=0; c_idx<m_c_idx.size(); c_idx++) {
+      p = m_c_idx[c_idx];
+      for (i=0; i<m_E[p].size(); i++) {
+        printf("%s c%i-v%i (%0.3f)\n",
+            pfx,
+            m_E[p][i].m_id[0], m_E[p][i].m_id[1],
+            (float)m_E[p][i].m_d[it][0] );
+      }
+    }
+    printf("%s\n", pfx);
+
+  }
+
+  int save_state(char *fn) {
+    int32_t i;
+    FILE *fp;
+    if ((fp = fopen(fn, "w"))==NULL) { return -1; }
+
+    fwrite(&(m_nvar), sizeof(int32_t), 1, fp);
+    fwrite(&(m_nclause), sizeof(int32_t), 1, fp);
+    fwrite(&(m_t), sizeof(int32_t), 1, fp);
+    fwrite(&(m_eps), sizeof(double), 1, fp);
+    fwrite(&(m_raw_clause_info[0]), sizeof(int32_t), m_raw_clause_info.size(), fp);
+    fwrite(&(m_raw_clause[0]), sizeof(int32_t), m_raw_clause.size(), fp);
+    fwrite(&(m_v_idx[0]), sizeof(int32_t), m_v_idx.size(), fp);
+    fwrite(&(m_c_idx[0]), sizeof(int32_t), m_c_idx.size(), fp);
+    for (i=0; i<m_E.size(); i++) {
+      fwrite(&(m_E[i][0]), sizeof(sp_edge_t), m_E[i].size(), fp);
+    }
+
+    fclose(fp);
+
+    return 0;
+  }
+
+  int load_state(char *fn) {
+    int32_t i;
+    FILE *fp;
+    size_t _sz;
+
+    if ((fp = fopen(fn, "r"))==NULL) { return -1; }
+
+    fread(&(m_nvar), sizeof(int32_t), 1, fp);
+    fread(&(m_nclause), sizeof(int32_t), 1, fp);
+    fread(&(m_t), sizeof(int32_t), 1, fp);
+    fread(&(m_eps), sizeof(double), 1, fp);
+
+    m_raw_clause_info.resize(2*m_nclause);
+    fread(&(m_raw_clause_info[0]), sizeof(int32_t), m_raw_clause_info.size(), fp);
+
+    _sz = m_raw_clause_info[ m_raw_clause_info.size()-2 ] +
+          m_raw_clause_info[ m_raw_clause_info.size()-1 ];
+
+    m_raw_clause.resize(_sz);
+    fread(&(m_raw_clause[0]), sizeof(int32_t), _sz, fp);
+
+    m_v_idx.resize(m_nvar);
+    fread(&(m_v_idx[0]), sizeof(int32_t), m_v_idx.size(), fp);
+
+    m_c_idx.resize(m_nclause);
+    fwrite(&(m_c_idx[0]), sizeof(int32_t), m_c_idx.size(), fp);
+
+    m_E.resize(m_nclause);
+    for (i=0; i<m_E.size(); i++) {
+      m_E[i].resize(m_raw_clause_info[2*i + 1]);
+      fread(&(m_E[i][0]), sizeof(sp_edge_t), m_E[i].size(), fp);
+    }
+
+    fclose(fp);
+
+    return 0;
   }
 
   void print_raw_clause() {
@@ -181,7 +287,7 @@ typedef struct sp_type {
     int32_t i, j, p, n;
     int32_t s;
 
-    fprintf(fp, "p %i %i\n", (int)m_nvar, (int)m_nclause);
+    fprintf(fp, "p cnf %i %i\n", (int)m_nvar, (int)m_nclause);
     for (i=0; i<m_c_idx.size(); i++) {
       p = m_c_idx[i];
       for (j=0; j<m_E[p].size(); j++) {
@@ -260,6 +366,37 @@ typedef struct sp_type {
     return 0;
   }
 
+  int biasV(int vname) {
+    int v_idx, i, j, p, q, t_cur, p_bp;
+    double p_plus = 1.0, p_minus = 1.0, p_zero = 1.0, d;
+    double w_plus, w_minus, w_zero;
+
+    t_cur = m_t;
+
+    v_idx = vname-1;
+    p = m_v_idx[v_idx];
+
+    for (i=0; i<m_E[p].size(); i++) {
+      q = m_E[p][i].m_idx[1];
+      p_bp = m_E[p][i].m_bp_offset;
+      d = (1.0 - m_E[q][p_bp].m_d[t_cur][0]);
+      if (m_E[p][i].m_J < 0)  { p_plus  *= d; }
+      else                    { p_minus *= d; }
+      p_zero = d;
+    }
+
+    w_plus  = p_plus / (p_plus + p_minus + p_zero);
+    w_minus = p_minus / (p_plus + p_minus + p_zero);
+    w_zero = 1.0 - w_plus - w_minus;
+
+    if (g_verbose > 2) {
+      printf("## bias v%i (p:%0.3f, m:%0.3f, z:%0.3f)\n",
+          vname,
+          (float)w_plus, (float)w_minus, (float)w_zero);
+    }
+
+  }
+
   int tick(void) {
     int32_t i, j, n;
     int32_t t_cur, t_nxt, J;
@@ -272,10 +409,21 @@ typedef struct sp_type {
     t_cur = m_t;
     t_nxt = 1-m_t;
 
-    // first update variable 'probabilities'
+    if (g_verbose > 2) {
+      printf("# tick begin\n");
+
+      debug_print_weight((char *)"##", t_cur);
+
+    }
+
+    // first update variable messages
     //
     for (v_idx=0; v_idx < m_v_idx.size(); v_idx++) {
       p = m_v_idx[v_idx];
+
+      if (g_verbose > 2) {
+        printf("# v%i (m_E[%i])\n", v_idx+1, p);
+      }
 
       prod_plus = 1.0;
       prod_minus = 1.0;
@@ -288,11 +436,36 @@ typedef struct sp_type {
         d = m_E[_q][_s].m_d[t_cur][0];
         prod_all *= (1.0 - d);
         if (m_E[p][i].m_J < 0) {
+
           prod_plus *= (1.0 - d);
+
+          if (g_verbose > 2) {
+            printf("#  v%i-c%i (m_E[%i][%i], m_J %i):  prod_plus: %f, prod_all: %f\n",
+                v_idx+1, _q,
+                p, i,
+                m_E[p][i].m_J,
+                prod_plus, prod_all);
+          }
+
         }
         else {
           prod_minus *= (1.0 - d);
+
+          if (g_verbose > 2) {
+            printf("#  v%i-c%i (m_E[%i][%i], m_J %i):  prod_minus: %f, prod_all: %f\n",
+                v_idx+1, _q,
+                p, i,
+                m_E[p][i].m_J,
+                prod_minus, prod_all);
+          }
+
         }
+      }
+
+      if (g_verbose > 2) {
+        printf("##. v%i (plus:%0.3f,minus:%0.3f,all:%0.3f)\n",
+            v_idx+1,
+            (float)prod_plus, (float)prod_minus, (float)prod_all);
       }
 
       for (i=0; i<m_E[p].size(); i++) {
@@ -301,10 +474,38 @@ typedef struct sp_type {
         _s = m_E[p][i].m_bp_offset;
 
         d = (1.0 - m_E[_q][_s].m_d[t_cur][0]);
-        if (d<m_eps) { d=1.0; }
 
-        //>>UNCHECKED!!!!!!!
-        if ( m_E[p][i].m_J == 1 ) {
+        if (g_verbose > 2) {
+          printf("##. v%i-c%i d %0.3f\n",
+              m_E[p][i].m_id[0], m_E[p][i].m_id[1],(float)d);
+        }
+
+        if (d<m_eps) {
+          d=1.0;
+
+          if (g_verbose > 2) {
+            printf("## d -> 1.0\n");
+          }
+        }
+
+        // \Pi_v^+ = \prod_{c \in V^+(v)} ( 1 - \nu_{c \to v} )
+        //
+        // \Pi_v^- = \prod_{c \in V^-(v)} ( 1 - \nu_{c \to v} )
+        //
+        // J_v^c =  1 -> V_c^u(v) = V_+(v)
+        //               V_c^s(v) = V_-(v) / c
+        //
+        //               \Pi_{v \to c}^u = (1 - \Pi_v^-) (\Pi_v^+ / (1 - \nu_{c \to v}))
+        //               \Pi_{v \to c}^s = (1 -  (\Pi_v^+ / (1 - \nu_{c \to v}))) (\Pi_v^- )
+        //
+        // J_v^c = -1 -> V_c^u(v) = V_-(v)
+        //               V_c^s(v) = V_+(v) / c
+        //
+        //               \Pi_{v \to c}^u = (1 - \Pi_v^+) (\Pi_v^- / (1 - \nu_{c \to v})
+        //               \Pi_{v \to c}^s = (1 -  (\Pi_v^- / (1 - \nu_{c \to v}))) (\Pi_v^+ )
+        //
+
+        if ( m_E[p][i].m_J > 0 ) {
           m_E[p][i].m_d[t_nxt][0] = (1.0 - prod_plus) * (prod_minus / d);
           m_E[p][i].m_d[t_nxt][1] = (1.0 - (prod_minus / d) ) * prod_plus;
         }
@@ -313,13 +514,20 @@ typedef struct sp_type {
           m_E[p][i].m_d[t_nxt][1] = (1.0 - (prod_plus / d) ) * prod_minus;
         }
         m_E[p][i].m_d[t_nxt][2] = prod_all / d;
-        //<<UNCHECKED!!!!!!!
+
+        if (g_verbose > 2) {
+          printf("##.. v%i-c%i (u%0.3f,s%0.3f,z%0.3f)\n",
+              m_E[p][i].m_id[0], m_E[p][i].m_id[1],
+              (float)m_E[p][i].m_d[t_nxt][0],
+              (float)m_E[p][i].m_d[t_nxt][1],
+              (float)m_E[p][i].m_d[t_nxt][2]);
+        }
 
       }
 
     }
 
-    // next, using the above, update the clause 'probabilities'
+    // next, using the above, update the clause messages
     //
     for (c_idx=0; c_idx < m_c_idx.size(); c_idx++) {
       p = m_c_idx[c_idx];
@@ -358,6 +566,15 @@ typedef struct sp_type {
     }
 
     m_t = t_nxt;
+
+    if (g_verbose > 2) {
+
+      debug_print_weight((char *)"##", t_nxt);
+
+      printf("# tick end\n\n");
+    }
+
+
   }
 
   void print_sp(void) {
@@ -371,13 +588,6 @@ typedef struct sp_type {
 struct option g_long_opt [] = {
   {0, 0, 0, 0},
 };
-
-void show_help(FILE *fp) {
-  fprintf(fp, "\n\nusage:\n");
-  fprintf(fp, "  survey-prop [-h]\n");
-  fprintf(fp, "\n");
-  fprintf(fp, "  [-h]     show help (this screen)\n");
-}
 
 int parse_int_line(std::string &str, std::vector<int32_t> &v) {
   size_t n;
@@ -555,11 +765,26 @@ int read_dimacs(FILE *fp, sp_t &sp) {
   return 0;
 }
 
+void show_help(FILE *fp) {
+  fprintf(fp, "\nusage:\n");
+  fprintf(fp, "\n  survey-prop [-C] [-P <fmt>] [-h]\n");
+  fprintf(fp, "\n");
+  fprintf(fp, "[-S <datfn>]     save to file\n");
+  fprintf(fp, "[-L <datfn>]     load from save file\n");
+  fprintf(fp, "[-P <fmt>]       output format (dimacs|dot|edge)\n");
+  fprintf(fp, "[-C]             consistency check\n");
+  fprintf(fp, "[-h]             show help (this screen)\n");
+  fprintf(fp, "\n");
+}
+
 int main(int argc, char **argv) {
   int i, ch, opt_idx, r;
   FILE *ifp = stdin;
   std::string ifn;
   std::string ofn;
+
+  std::string opt_output_fmt;
+  int opt_check_consist = 0;
 
   char _ofn[1024];
 
@@ -568,15 +793,20 @@ int main(int argc, char **argv) {
   sp_t sp;
 
   r=0;
-  ifn = "-";
+  ifn = "";
 
-  while ((ch = getopt_long(argc, argv, "h", g_long_opt, &opt_idx)) >= 0) {
+  while ((ch = getopt_long(argc, argv, "hP:C", g_long_opt, &opt_idx)) >= 0) {
     switch(ch) {
       case 0:
         break;
       case 'h':
         show_help(stdout);
         exit(0);
+        break;
+      case 'C':
+        opt_check_consist = 1;
+      case 'P':
+        opt_output_fmt = optarg;
         break;
       default:
         show_help(stderr);
@@ -585,6 +815,29 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (optind < argc) {
+    ifn = argv[optind];
+  }
+
+  if (isatty(fileno(stdin))) {
+    if (ifn.size() == 0) {
+      show_help(stderr);
+      exit(-1);
+    }
+  }
+  else if (ifn.size()==0) {
+    ifn = "-";
+  }
+
+  if (ifn=="-") {
+    ifp = stdin;
+  }
+  else {
+    if ((ifp = fopen(ifn.c_str(), "r"))==NULL) {
+      perror(ifn.c_str());
+      exit(-1);
+    }
+  }
 
 
   r = read_dimacs(ifp, sp);
@@ -592,22 +845,32 @@ int main(int argc, char **argv) {
     perror(ifn.c_str());
   }
 
-  r = sp.consistency();
-  //printf("# got %i\n", r);
+  if (opt_check_consist) {
+    r = sp.consistency();
+    printf("# got %i\n", r);
+  }
 
-  //sp.print_E();
-  //sp.print_dimacs(stdout);
+  if (opt_output_fmt == "dimacs") {
+    sp.print_dimacs(stdout);
+  }
+  else if (opt_output_fmt == "dot") {
+    sp.print_dot_w(stdout);
+  }
+  else if (opt_output_fmt == "edge") {
+    sp.print_E();
+  }
 
   for (i=0; i<10; i++) {
     snprintf(_ofn, 32, "./tmp/t%02i.dot", i);
     sp.print_dot_w_fn(_ofn);
     sp.tick();
   }
-  //sp.print_dot_w(stdout);
-  //sp.print_dot(stdout);
+
+  for (i=0; i<sp.m_v_idx.size(); i++) {
+    sp.biasV(i+1);
+  }
 
   //sp.tick();
-
 
   //sp.print_dimacs(stdout);
   //sp.print_E();
@@ -618,7 +881,5 @@ int main(int argc, char **argv) {
 
   //sp.print();
   //sp.print_sp();
-
-
 
 }

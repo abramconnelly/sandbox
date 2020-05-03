@@ -65,6 +65,8 @@ typedef struct sp_type {
   int32_t m_nvar;
   int32_t m_nclause;
 
+  std::vector< double > m_bias[3];
+
   // time index {0,1}
   //
   int32_t m_t;
@@ -184,6 +186,10 @@ typedef struct sp_type {
       m_E[i].resize(m_raw_clause_info[2*i + 1]);
       fread(&(m_E[i][0]), sizeof(sp_edge_t), m_E[i].size(), fp);
     }
+
+    m_bias[0].resize(m_nvar);
+    m_bias[1].resize(m_nvar);
+    m_bias[2].resize(m_nvar);
 
     fclose(fp);
 
@@ -366,28 +372,51 @@ typedef struct sp_type {
     return 0;
   }
 
-  int biasV(int vname) {
+  int biasV(double *out, int vname) {
     int v_idx, i, j, p, q, t_cur, p_bp;
     double p_plus = 1.0, p_minus = 1.0, p_zero = 1.0, d;
+    double pi_plus, pi_minus, pi_zero;
     double w_plus, w_minus, w_zero;
 
     t_cur = m_t;
 
     v_idx = vname-1;
+
     p = m_v_idx[v_idx];
 
     for (i=0; i<m_E[p].size(); i++) {
       q = m_E[p][i].m_idx[1];
       p_bp = m_E[p][i].m_bp_offset;
       d = (1.0 - m_E[q][p_bp].m_d[t_cur][0]);
+
+      printf("??? c%i-v%i = %f, (1.0 - %f) = %f\n",
+          m_E[q][p_bp].m_id[0],
+          m_E[q][p_bp].m_id[1],
+          m_E[q][p_bp].m_d[t_cur][0],
+          m_E[q][p_bp].m_d[t_cur][0],
+          1.0-m_E[q][p_bp].m_d[t_cur][0]);
+
+
+
       if (m_E[p][i].m_J < 0)  { p_plus  *= d; }
       else                    { p_minus *= d; }
-      p_zero = d;
+      p_zero *= d;
     }
+
+    pi_plus = (1.0 - p_plus)*(p_minus);
+    pi_minus = (1.0 - p_minus)*(p_plus);
+    pi_zero = p_zero;
+
+    printf("???? %f %f %f\n", p_plus, p_minus, p_zero);
+    printf("???? %f %f %f\n", pi_plus, pi_minus, pi_zero);
 
     w_plus  = p_plus / (p_plus + p_minus + p_zero);
     w_minus = p_minus / (p_plus + p_minus + p_zero);
     w_zero = 1.0 - w_plus - w_minus;
+
+    out[0] = w_plus;
+    out[1] = w_minus;
+    out[2] = w_zero;
 
     if (g_verbose > 2) {
       printf("## bias v%i (p:%0.3f, m:%0.3f, z:%0.3f)\n",
@@ -395,9 +424,192 @@ typedef struct sp_type {
           (float)w_plus, (float)w_minus, (float)w_zero);
     }
 
+    return 0;
   }
 
+  int bias_all(void) {
+    int i;
+    double out[3];
+
+    for (i=0; i<m_v_idx.size(); i++) {
+      biasV(out, i+1);
+      m_bias[0][i] = out[0];
+      m_bias[1][i] = out[1];
+      m_bias[2][i] = out[2];
+    }
+    return 0;
+  }
+
+  void compute_pi_usz(double *out, int32_t v_node, int32_t c_node, int32_t J) {
+    int32_t i, j, t_cur, t_nxt, l_node, l_bp;
+    double d, prod_u, prod_s, prod_z;
+
+    t_cur = m_t;
+    t_nxt = 1-t_cur;
+
+    if (g_verbose > 2) {
+      printf("## computing pi v%i-c%i\n",
+          m_E[v_node][0].m_id[0],
+          m_E[c_node][0].m_id[0]);
+      printf("## compute_pi_usz: t_cur %i, t_nxt %i, c_node %i, v_node %i, J %i\n", t_cur, t_nxt,
+          c_node, v_node, J);
+    }
+
+    prod_u = 1.0;
+    prod_s = 1.0;
+    prod_z = 1.0;
+    for (i=0; i<m_E[v_node].size(); i++) {
+      if (m_E[v_node][i].m_idx[1] == c_node) {
+
+        if (g_verbose > 2) {
+          printf("## skipping c_node %i\n", c_node);
+        }
+
+        continue;
+      }
+
+      if (g_verbose > 2) {
+        printf("### c%i-v%i\n",
+            m_E[v_node][i].m_id[1],
+            m_E[v_node][i].m_id[0]);
+      }
+
+
+      l_node  = m_E[v_node][i].m_idx[1];
+      l_bp    = m_E[v_node][i].m_bp_offset;
+
+      d = m_E[l_node][l_bp].m_d[t_cur][0];
+      //if (J == 1) {
+      if (J == m_E[l_node][l_bp].m_J) {
+        prod_u *= (1.0 - d);
+
+        if (g_verbose) {
+          printf("## c%i-v%i, J %i,  prod_u * (1.0 - %f) -> %f\n",
+              m_E[l_node][l_bp].m_id[0], m_E[l_node][l_bp].m_id[1],
+              J,
+              d, prod_u);
+        }
+
+      }
+      else {
+        prod_s *= (1.0 - d);
+
+        if (g_verbose) {
+          printf("## c%i-v%i J %i, prod_s * (1.0 - %f) -> %f\n",
+              m_E[l_node][l_bp].m_id[0], m_E[l_node][l_bp].m_id[1],
+              J,
+              d, prod_s);
+        }
+
+
+      }
+      prod_z *= (1.0 - d);
+
+    }
+
+    out[0] = (1.0 - prod_u)*(prod_s);
+    out[1] = (1.0 - prod_s)*(prod_u);
+    out[2] = prod_z;
+
+    if (g_verbose) {
+      printf("## out (%f,%f,%f)\n\n",
+          out[0], out[1], out[2]);
+    }
+
+    return;
+  }
+
+
+  //int tick_simple(void) {
   int tick(void) {
+    int32_t i, j, n;
+    int32_t t_cur, t_nxt, J;
+    int32_t v_idx, c_idx, p;
+    int32_t _q, _s;
+    double prod_plus, prod_minus, prod_all;
+    double prod_u, prod_s, prod_0;
+    double d, d_out[3], d_num, d_denom;
+
+    t_cur = m_t;
+    t_nxt = 1-m_t;
+
+    if (g_verbose>2) {
+      printf("############\n");
+    }
+
+    for (c_idx=0; c_idx < m_c_idx.size(); c_idx++) {
+      p = m_c_idx[c_idx];
+
+      if (g_verbose>2) {
+        printf("\n\n## c%i\n", c_idx);
+      }
+
+      for (i=0; i < m_E[p].size(); i++) {
+
+        if (g_verbose>2) {
+          printf("## c%i-v%i\n", m_E[p][i].m_id[0], m_E[p][i].m_id[1]);
+        }
+
+
+        _q = m_E[p][i].m_idx[1];
+        _s = m_E[p][i].m_bp_offset;
+
+        compute_pi_usz(d_out, _q, p, m_E[p][i].m_J);
+        m_E[_q][_s].m_d[t_nxt][0] = d_out[0];
+        m_E[_q][_s].m_d[t_nxt][1] = d_out[1];
+        m_E[_q][_s].m_d[t_nxt][2] = d_out[2];
+
+      }
+
+      for (i=0; i < m_E[p].size(); i++) {
+        d_num = 1.0;
+        d_denom = 1.0;
+
+        for (j=0; j < m_E[p].size(); j++) {
+          if (i==j) { continue; }
+
+          _q = m_E[p][j].m_idx[1];
+          _s = m_E[p][j].m_bp_offset;
+
+          d_num *= m_E[_q][_s].m_d[t_nxt][0];
+          d_denom *=
+            ( m_E[_q][_s].m_d[t_nxt][0] +
+              m_E[_q][_s].m_d[t_nxt][1] +
+              m_E[_q][_s].m_d[t_nxt][2] );
+
+        }
+
+        if (d_denom > m_eps) {
+          m_E[p][i].m_d[t_nxt][0] = d_num / d_denom;
+        }
+        else {
+          m_E[p][i].m_d[t_nxt][0] = 1.0;
+        }
+
+
+        if (g_verbose > 2) {
+          printf("## c%i-v%i nu %f\n",
+              m_E[p][i].m_id[0],
+              m_E[p][i].m_id[1],
+              (float)m_E[p][i].m_d[t_nxt][0]);
+        }
+
+      }
+
+      if (g_verbose>2) {
+        printf("######\n");
+      }
+
+
+
+    }
+
+    m_t = t_nxt;
+
+    return 0;
+  }
+
+  int _tick_experimental(void) {
     int32_t i, j, n;
     int32_t t_cur, t_nxt, J;
     int32_t v_idx, c_idx, p;
@@ -700,6 +912,9 @@ int read_dimacs(FILE *fp, sp_t &sp) {
   sp.m_c_idx.resize( sp.m_nclause );
   sp.m_v_idx.resize( sp.m_nvar );
   sp.m_E.resize( sp.m_nclause + sp.m_nvar );
+  sp.m_bias[0].resize( sp.m_nvar );
+  sp.m_bias[1].resize( sp.m_nvar );
+  sp.m_bias[2].resize( sp.m_nvar );
 
   clause_base_idx = 0;
   var_base_idx = sp.m_nclause;
@@ -860,14 +1075,21 @@ int main(int argc, char **argv) {
     sp.print_E();
   }
 
-  for (i=0; i<10; i++) {
+  for (i=0; i<50; i++) {
     snprintf(_ofn, 32, "./tmp/t%02i.dot", i);
     sp.print_dot_w_fn(_ofn);
     sp.tick();
   }
 
+  sp.debug_print_weight((char *)"##", sp.m_t);
+
+  sp.bias_all();
   for (i=0; i<sp.m_v_idx.size(); i++) {
-    sp.biasV(i+1);
+    //sp.biasV(i+1);
+    printf("v%i (%f,%f,%f)\n", i+1,
+        (float)sp.m_bias[0][i],
+        (float)sp.m_bias[1][i],
+        (float)sp.m_bias[2][i]);
   }
 
   //sp.tick();

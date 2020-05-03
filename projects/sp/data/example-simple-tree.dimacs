@@ -1,0 +1,10 @@
+c
+c simple tree example for debugging
+c
+c 
+p cnf 5 5
+1 0
+2 0
+-3 0
+-4 0
+-1 -2 3 4 5 

@@ -19,7 +19,7 @@ clean:
 binclean: clean
 	rm -f walksat sp spprof verify merge
 walksat: walksat.c
-	${CC} -lm -O6 walksat.c -o walksat
+	${CC} -O6 walksat.c -o walksat -lm
 merge: merge.c
 	${CC} -Wall merge.c -o merge
 verify: verify.c

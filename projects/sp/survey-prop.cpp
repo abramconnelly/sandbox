@@ -58,6 +58,22 @@ typedef struct sp_edge_type {
   //
   double m_d[2][3];
 
+  sp_edge_type() {
+    m_type = 0;
+    m_id[0] = 0;
+    m_id[1] = 0;
+    m_idx[0] = 0;
+    m_idx[1] = 0;
+    m_bp_offset=0;
+    m_J = 0;
+    m_d[0][0] = 0;
+    m_d[0][1] = 0;
+    m_d[0][2] = 0;
+    m_d[1][0] = 0;
+    m_d[1][1] = 0;
+    m_d[1][2] = 0;
+  }
+
 } sp_edge_t;
 
 typedef struct sp_type {
@@ -132,8 +148,50 @@ typedef struct sp_type {
 
   }
 
+  void debug_print_edge(sp_edge_t &m) {
+    printf(" (m_type:%i,m_id:%i;%i,m_idx:%i;%i,m_bp_offset:%i,m_J:%i,m_d{%f;%f;%f;%f;%f;%f})\n",
+        m.m_type, m.m_id[0], m.m_id[1], m.m_idx[0], m.m_idx[1], m.m_bp_offset, m.m_J,
+        m.m_d[0][0], m.m_d[0][1], m.m_d[0][2],
+        m.m_d[1][0], m.m_d[1][1], m.m_d[1][2]);
+  }
+
+  void debug_print(void) {
+    int i,j;
+    printf("m_nvar: %i\n", m_nvar);
+    printf("m_mclause: %i\n", m_nclause);
+    printf("m_t: %i\n", m_t);
+    printf("m_eps: %f\n", (float)m_eps);
+    printf("m_raw_clause_info:");
+    for (i=0; i<m_raw_clause_info.size(); i++) {
+      printf(" %i", m_raw_clause_info[i]);
+    }
+    printf("\n");
+    printf("m_raw_clause:");
+    for (i=0; i<m_raw_clause.size(); i++) {
+      printf(" %i", m_raw_clause[i]);
+    }
+    printf("\n");
+    printf("m_v_idx:");
+    for (i=0; i<m_v_idx.size(); i++) {
+      printf(" %i", m_v_idx[i]);
+    }
+    printf("\n");
+    printf("m_c_idx:");
+    for (i=0; i<m_c_idx.size(); i++) {
+      printf(" %i", m_c_idx[i]);
+    }
+    printf("\n");
+    for (i=0; i<m_E.size(); i++) {
+      for (j=0; j<m_E[i].size(); j++) {
+        printf("m_E[%i][%i]:", i, j);
+        debug_print_edge(m_E[i][j]);
+      }
+    }
+    printf("\n");
+  }
+
   int save_state(char *fn) {
-    int32_t i;
+    int32_t i, sz;
     FILE *fp;
     if ((fp = fopen(fn, "w"))==NULL) { return -1; }
 
@@ -146,6 +204,8 @@ typedef struct sp_type {
     fwrite(&(m_v_idx[0]), sizeof(int32_t), m_v_idx.size(), fp);
     fwrite(&(m_c_idx[0]), sizeof(int32_t), m_c_idx.size(), fp);
     for (i=0; i<m_E.size(); i++) {
+      sz = (int32_t)m_E[i].size();
+      fwrite(&sz, sizeof(int32_t), 1, fp);
       fwrite(&(m_E[i][0]), sizeof(sp_edge_t), m_E[i].size(), fp);
     }
 
@@ -155,7 +215,7 @@ typedef struct sp_type {
   }
 
   int load_state(char *fn) {
-    int32_t i;
+    int32_t i, s;
     FILE *fp;
     size_t _sz;
 
@@ -179,11 +239,12 @@ typedef struct sp_type {
     fread(&(m_v_idx[0]), sizeof(int32_t), m_v_idx.size(), fp);
 
     m_c_idx.resize(m_nclause);
-    fwrite(&(m_c_idx[0]), sizeof(int32_t), m_c_idx.size(), fp);
+    fread(&(m_c_idx[0]), sizeof(int32_t), m_c_idx.size(), fp);
 
-    m_E.resize(m_nclause);
+    m_E.resize(m_nclause + m_nvar);
     for (i=0; i<m_E.size(); i++) {
-      m_E[i].resize(m_raw_clause_info[2*i + 1]);
+      fread(&s, sizeof(int32_t), 1, fp);
+      m_E[i].resize(s);
       fread(&(m_E[i][0]), sizeof(sp_edge_t), m_E[i].size(), fp);
     }
 
@@ -519,7 +580,6 @@ typedef struct sp_type {
     return;
   }
 
-
   //int tick_simple(void) {
   int tick(void) {
     int32_t i, j, n;
@@ -549,7 +609,6 @@ typedef struct sp_type {
         if (g_verbose>2) {
           printf("## c%i-v%i\n", m_E[p][i].m_id[0], m_E[p][i].m_id[1]);
         }
-
 
         _q = m_E[p][i].m_idx[1];
         _s = m_E[p][i].m_bp_offset;
@@ -586,7 +645,6 @@ typedef struct sp_type {
           m_E[p][i].m_d[t_nxt][0] = 1.0;
         }
 
-
         if (g_verbose > 2) {
           printf("## c%i-v%i nu %f\n",
               m_E[p][i].m_id[0],
@@ -599,8 +657,6 @@ typedef struct sp_type {
       if (g_verbose>2) {
         printf("######\n");
       }
-
-
 
     }
 
@@ -852,6 +908,10 @@ int read_dimacs(FILE *fp, sp_t &sp) {
 
   std::vector<int32_t> v_nvar;
 
+  // get rid of valgrind errors
+  //
+  memset(&(_edge), 0, sizeof(sp_edge_t));
+
   while (!feof(fp)) {
     ch = fgetc(fp);
     if ((ch==EOF) || (ch=='\n')) {
@@ -953,6 +1013,7 @@ int read_dimacs(FILE *fp, sp_t &sp) {
       _edge.m_idx[1] = var_base_idx + var_idx;
       _edge.m_J = ( (sp.m_raw_clause[c_idx + j] < 0) ? 1 : -1 );
       _edge.m_d[0][0] = _drand();
+
       sp.m_E[clause_base_idx + clause_idx].push_back(_edge);
 
       _edge.m_type = (int)'v';
@@ -1005,7 +1066,7 @@ int main(int argc, char **argv) {
 
   std::vector<int32_t> nei;
 
-  sp_t sp;
+  sp_t sp, test_sp;
 
   r=0;
   ifn = "";
@@ -1074,6 +1135,16 @@ int main(int argc, char **argv) {
   else if (opt_output_fmt == "edge") {
     sp.print_E();
   }
+
+  sp.debug_print();
+
+  r = sp.save_state((char *)"save_test.sp");
+  printf(">> %i\n", r);
+
+  r = test_sp.load_state((char *)"save_test.sp");
+  printf(">> %i\n", r);
+  test_sp.debug_print();
+  exit(0);
 
   for (i=0; i<50; i++) {
     snprintf(_ofn, 32, "./tmp/t%02i.dot", i);
